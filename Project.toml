@@ -3,6 +3,11 @@ uuid = "74dba683-9cfd-4a5a-a835-4e395551c400"
 authors = ["Aayush Sabharwal <aayush.sabharwal@gmail.com> and contributors"]
 version = "1.0.0-DEV"
 
+[deps]
+Chess = "717200cc-f167-4fd3-b4bf-b5e480529844"
+Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
+
 [compat]
 julia = "1.8"
 
