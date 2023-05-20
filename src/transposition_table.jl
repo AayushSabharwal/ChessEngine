@@ -31,6 +31,11 @@ end
 
 @enum SearchNodeType Exact UpperBound LowerBound
 
+struct TranspositionTableKey
+    key_hash::UInt
+    check_hash::UInt
+end
+
 struct TranspositionTableEntry
     best_move::Move
     best_value::Int
@@ -39,14 +44,25 @@ struct TranspositionTableEntry
 end
 
 struct TranspositionTable
-    hasher::ZobristHasher
-    table::Dict{UInt,TranspositionTableEntry}
+    key_hasher::ZobristHasher
+    check_hasher::ZobristHasher
+    table::Dict{TranspositionTableKey,TranspositionTableEntry}
 end
 
-TranspositionTable(seed = 42) = TranspositionTable(ZobristHasher(seed), Dict{UInt,TranspositionTableEntry}())
+TranspositionTable(seed = 42) = TranspositionTable(ZobristHasher(seed), ZobristHasher(seed<<1), Dict{UInt,TranspositionTableEntry}())
 
-Base.getindex(tb::TranspositionTable, idx::UInt) = getindex(tb.table, idx)
+function ttkey(tt::TranspositionTable, board::Board)
+    return TranspositionTableKey(zhash(tt.key_hasher, board), zhash(tt.check_hasher, board))
+end
 
-Base.setindex!(tb::TranspositionTable, e::TranspositionTableEntry, idx::UInt) = setindex!(tb.table, e, idx)
+function Base.getindex(tb::TranspositionTable, idx::TranspositionTableKey)
+    getindex(tb.table, idx)
+end
 
-Base.haskey(tb::TranspositionTable, idx::UInt) = haskey(tb.table, idx)
+function Base.setindex!(tb::TranspositionTable, e::TranspositionTableEntry, idx::TranspositionTableKey)
+    setindex!(tb.table, e, idx)
+end
+
+Base.haskey(tb::TranspositionTable, idx::TranspositionTableKey) = haskey(tb.table, idx)
+
+Base.get(tt::TranspositionTable, idx::TranspositionTableKey, default) = get(tt.table, idx, default)

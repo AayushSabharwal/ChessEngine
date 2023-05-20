@@ -1,143 +1,100 @@
-mutable struct DebugStats
-    positions::Int
-end
-
-DebugStats() = DebugStats(0)
-
 abstract type SearchAlgorithm end
 
-struct BruteForceSearch
-    max_depth::Int
-    stats::DebugStats
+mutable struct SearchResult
+    nodes_visited::Int
+    best_move::Move
+    best_value::Int
 end
 
-BruteForceSearch(md) = BruteForceSearch(md, DebugStats())
+SearchResult(iv) = SearchResult(0, MOVE_NULL, iv)
 
-function search(alg::BruteForceSearch, board::Board, eval, depth = 0)
-    if isterminal(board)
-        if ischeckmate(board)
-            if sidetomove(board) == WHITE
-                return nothing, -piece_values[KING.val]
-            else
-                return nothing, piece_values[KING.val]
-            end
-        else
-            return nothing, 0
-        end
-    end
-
-    alg.stats.positions += 1
-
-    allmoves = moves(board)
-    if depth == alg.max_depth
-        return nothing, evaluate(eval, board, allmoves)
-    end
-
-    side = sidetomove(board)
-    best_move = nothing
-    best_value = side == WHITE ? typemin(Int) : typemax(Int)
-    for move in allmoves
-        undoinfo = domove!(board, move)
-        _, value = search(alg, board, eval, depth + 1)
-        undomove!(board, undoinfo)
-
-        if isnothing(best_move) || side == WHITE && value > best_value || side == BLACK && value < best_value
-            best_move = move
-            best_value = value
-        end
-    end
-
-    return best_move, best_value
+struct MoveOrderer
+    check_value::Int
+    see_multiplier::Int
+    promotion_multiplier::Int
 end
 
-struct AlphaBetaPruning{M<:MoveOrderer}
+MoveOrderer() = MoveOrderer(300, 1, 1)
+
+struct AlphaBetaPruning{E<:BoardEvaluator} <: SearchAlgorithm
     max_depth::Int
+    eval::E
     table::TranspositionTable
-    move_orderer::M
-    stats::DebugStats
+    move_orderer::MoveOrderer
 end
 
-AlphaBetaPruning(md, mo = ChecksCapturesAttacksPromotions()) = AlphaBetaPruning(md, TranspositionTable(), mo, DebugStats())
+AlphaBetaPruning(md) = AlphaBetaPruning(md, PieceDifference(), TranspositionTable(), MoveOrderer())
 
-function _alphabetasearch(alg::AlphaBetaPruning, board::Board, eval, depth, α, β)
+function alphabeta_search(alg::AlphaBetaPruning, board::Board, depth, α, β, color)
+    α_orig = α
+
+    idx = ttkey(alg.table, board)
+    tte = get(alg.table, idx, nothing)
+
+    depth_to_go = alg.max_depth - depth
+    if !isnothing(tte) && tte.depth >= depth_to_go
+        if tte.type == Exact
+            return SearchResult(1, tte.best_move, tte.best_value)
+        elseif tte.type == LowerBound
+            α = max(α, tte.best_value)
+        else
+            β = min(β, tte.best_value)
+        end
+
+        if α >= β
+            return SearchResult(1, tte.best_move, tte.best_value)
+        end
+    end
+
     if isterminal(board)
         if ischeckmate(board)
-            if sidetomove(board) == WHITE
-                return nothing, -piece_values[KING.val]
-            else
-                return nothing, piece_values[KING.val]
-            end
+            return SearchResult(1, MOVE_NULL, color * -PIECE_VALUES[KING.val])
         else
-            return nothing, 0
+            return SearchResult(1, MOVE_NULL, 0)
         end
     end
-
-    side = sidetomove(board)
-
-    idx = zhash(alg.table.hasher, board)
-    depth_to_go = alg.max_depth - depth
-    if haskey(alg.table, idx)
-        tte = alg.table[idx]
-        if tte.depth >= depth_to_go && (
-            tte.type == Exact ||
-                side == WHITE && tte.type == LowerBound && tte.best_value >= β ||
-                side == BLACK && tte.type == UpperBound && tte.best_value <= α
-            )
-            return tte.best_move, tte.best_value
-        end
-    end
-
-    alg.stats.positions += 1
 
     allmoves = moves(board)
     if depth == alg.max_depth
-        return nothing, evaluate(eval, board, allmoves)
+        return SearchResult(1, MOVE_NULL, color * evaluate(alg.eval, board, allmoves))
     end
 
-    moveordering = order_moves(alg.move_orderer, board, allmoves)
-    best_move = nothing
-    best_value = side == WHITE ? typemin(Int) : typemax(Int)
-    nodetype = Exact
-
+    moveordering = order_moves(alg.move_orderer, alg, board, allmoves)
+    res = SearchResult(typemin(Int))
     for i in moveordering
         move = allmoves[i]
+
         undoinfo = domove!(board, move)
-        _, value = _alphabetasearch(alg, board, eval, depth + 1, α, β)
+        node_res = alphabeta_search(alg, board, depth + 1, -β, -α, -color)
+        node_res.best_value *= -1
+
         undomove!(board, undoinfo)
 
-        if side == WHITE
-            if value > best_value
-                best_move = move
-                best_value = value
-            end
+        res.nodes_visited += node_res.nodes_visited
 
-            α = max(α, value)
-            if β <= α
-                nodetype = LowerBound
-                break
-            end
-        else
-            if value < best_value
-                best_move = move
-                best_value = value
-            end
-
-            β = min(β, value)
-            if β <= α
-                nodetype = UpperBound
-                break
-            end
+        if node_res.best_value > res.best_value
+            res.best_move = move
+            res.best_value = node_res.best_value
         end
+
+        α = max(α, node_res.best_value)
+        β <= α && break
     end
 
-    new_tte = TranspositionTableEntry(best_move, best_value, depth_to_go, nodetype)
-    if !haskey(alg.table, idx) || alg.table[idx].depth < depth_to_go || alg.table[idx].depth == depth_to_go && nodetype == Exact && alg.table[idx].type != Exact
-        alg.table[idx] = new_tte
+    nodetype = if res.best_value <= α_orig
+        UpperBound
+    elseif res.best_value >= β
+        LowerBound
+    else
+        Exact
     end
 
-    return best_move, best_value
+    new_tte = TranspositionTableEntry(res.best_move, res.best_value, depth_to_go, nodetype)
+    alg.table[idx] = new_tte
+
+    return res
 end
 
-function search(alg::AlphaBetaPruning, board::Board, eval, depth = 0)
-    return _alphabetasearch(alg, board, eval, depth, typemin(Int), typemax(Int))
+function search(alg::AlphaBetaPruning, board::Board)
+    return alphabeta_search(alg, board, 0, -MAX_PIECE_DIFFERENCE, MAX_PIECE_DIFFERENCE, 1)
 end
