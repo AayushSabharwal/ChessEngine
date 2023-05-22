@@ -2,5 +2,5 @@ using ChessEngine
 using Test
 
 @testset "ChessEngine.jl" begin
-    # Write your tests here.
+    positions = open(readlines, "fen.csv")
 end

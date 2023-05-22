@@ -3,7 +3,9 @@ mutable struct RotatingBuffer{S,T}
     idx::Int
 end
 
-RotatingBuffer{S,T}(el = zero(T)) where {S,T} = RotatingBuffer{S,T}(sacollect(MVector{S,T}, el for _ in 1:S), 1)
+function RotatingBuffer{S,T}(el = zero(T)) where {S,T}
+    return RotatingBuffer{S,T}(sacollect(MVector{S,T}, el for _ in 1:S), 1)
+end
 
 function add_to_buffer!(buffer::RotatingBuffer{S,T}, el::T) where {S,T}
     buffer.buffer[buffer.idx] = el
